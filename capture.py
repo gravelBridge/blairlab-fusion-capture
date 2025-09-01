@@ -1,37 +1,11 @@
-# capture.py
-# Fusion 360 Python script: capture 128x128 stereo "rodent eye" renders from
-# grid positions read from positions.txt.
-#
-# File structure:
-#   photos/
-#   capture.py
-#   positions.txt
-#
-# positions.txt format:
-#   file_prefix
-#   x,y
-#   x,y
-#   ...
-#
-# Notes:
-# - Grid (gx, gy) maps to model (X, Y) with axes swapped:
-#     model X = f(gy), model Y = g(gx), Z fixed = 33.577 in
-# - North is defined as direction from (5,5) to (5,0).
-# - For corner cells (0,0), (10,0), (0,10), (10,10), use NE, SE, SW, NW.
-# - Each grid position captures 8 images (4 directions per eye).
-# - Eye separation: 0.5 in (±0.25 in from center along base right vector).
-# - Eye yaw offset: ±50° from base direction; pitch up 15°; vertical FOV 150°.
-# - Images saved under photos/<file_prefix>/ as PNG files and will overwrite.
-
 import adsk.core
 import adsk.fusion
 import adsk.cam
 import math
 import os
+import time
 import traceback
 
-
-IN_PER_CM = 1.0 / 2.54  # not used directly; we convert inches -> cm
 CM_PER_IN = 2.54
 
 # Height of grid plane and eye elevation (inches)
@@ -44,7 +18,7 @@ EYE_SEPARATION_IN = 0.5  # total separation
 HALF_BASE_IN = EYE_SEPARATION_IN / 2.0
 YAW_OFFSET_DEG = 50.0
 PITCH_UP_DEG = 15.0
-VFOV_DEG = 150.0
+VFOV_DEG = 150.0  # vertical field-of-view in degrees
 
 # Output image size
 IMG_W = 128
@@ -116,14 +90,6 @@ def norm2d(vx: float, vy: float):
     return (vx / mag, vy / mag)
 
 
-def add2d(a, b):
-    return (a[0] + b[0], a[1] + b[1])
-
-
-def scale2d(v, s):
-    return (v[0] * s, v[1] * s)
-
-
 def is_corner(gx: int, gy: int) -> bool:
     return (gx in (0, 10)) and (gy in (0, 10))
 
@@ -138,7 +104,7 @@ def parse_positions_txt(script_dir: str):
     positions = []
     with open(path, "r", encoding="utf-8") as f:
         lines = [ln.strip() for ln in f.readlines()]
-    for i, ln in enumerate(lines):
+    for ln in lines:
         if not ln or ln.startswith("#"):
             continue
         if prefix is None:
@@ -158,24 +124,73 @@ def parse_positions_txt(script_dir: str):
     return prefix, positions
 
 
-def find_render_workspace(ui: adsk.core.UserInterface):
-    # Try common ids; return the first that exists
-    candidates = [
-        "FusionRenderEnvironment",
-        "RenderEnvironment",
-        "RenderWorkspace",
-        "Render",
-    ]
-    wss = ui.workspaces
-    for wid in candidates:
-        ws = wss.itemById(wid)
-        if ws:
-            return ws
-    # Fallback: stay in current workspace
-    return None
+def switch_to_render_workspace() -> bool:
+    app = adsk.core.Application.get()
+    ui = app.userInterface
+    ws = ui.workspaces.itemById("FusionRenderEnvironment")
+    if ws:
+        ws.activate()
+        adsk.doEvents()
+        return True
+    return False
 
 
-def set_camera_and_capture(
+def setup_render_settings(width: int, height: int) -> adsk.fusion.Rendering:
+    """
+    Configure rendering settings using the design's Render Manager.
+    Returns an adsk.fusion.Rendering object.
+    """
+    app = adsk.core.Application.get()
+    design = adsk.fusion.Design.cast(app.activeProduct)
+    if not design:
+        raise RuntimeError("No active Fusion design.")
+
+    render_mgr = design.renderManager
+    rendering = render_mgr.rendering
+
+    # Custom aspect ratio and resolution
+    rendering.aspectRatio = adsk.fusion.RenderAspectRatios.CustomRenderAspectRatio
+    rendering.resolutionWidth = int(width)
+    rendering.resolutionHeight = int(height)
+
+    # Quality (0..100); 100 = Excellent
+    rendering.renderQuality = 100
+    return rendering
+
+
+def start_and_wait_local_render(
+    rendering: adsk.fusion.Rendering,
+    camera: adsk.core.Camera,
+    filename: str,
+    timeout_s: float = 300.0,
+) -> None:
+    """
+    Perform a local render using the given camera and save to filename.
+    Blocks until finished or raises on failure/timeout.
+    """
+    # Overwrite existing file to avoid any dialogs
+    try:
+        if os.path.exists(filename):
+            os.remove(filename)
+    except:
+        pass
+
+    render_future = rendering.startLocalRender(filename, camera)
+
+    t0 = time.time()
+    while True:
+        state = render_future.renderState
+        if state == adsk.fusion.LocalRenderStates.FinishedLocalRenderState:
+            break
+        if state == adsk.fusion.LocalRenderStates.FailedLocalRenderState:
+            raise RuntimeError("Local render failed.")
+        if time.time() - t0 > timeout_s:
+            raise RuntimeError("Local render timed out.")
+        adsk.doEvents()
+        time.sleep(0.1)
+
+
+def set_camera_and_render(
     app: adsk.core.Application,
     eye_pt_cm: adsk.core.Point3D,
     fwd_vec3: adsk.core.Vector3D,
@@ -184,37 +199,30 @@ def set_camera_and_capture(
 ):
     vp = app.activeViewport
     cam = vp.camera
+    cam.isSmoothTransition = False
+    cam.cameraType = adsk.core.CameraTypes.PerspectiveCameraType
 
-    # Configure perspective camera with specified vertical FOV
-    cam.isPerspective = True
-    # Some APIs use 'perspectiveAngle', others 'viewAngle'
-    # Fusion 360 uses perspectiveAngle (radians) for perspective FOV.
-    try:
-        cam.perspectiveAngle = math.radians(v_fov_deg)
-    except:
-        # Fallback if property differs (rare)
-        try:
-            cam.viewAngle = math.radians(v_fov_deg)
-        except:
-            pass
+    # Clamp FOV into a safe range and set as vertical FOV
+    safe_fov = max(1.0, min(150.0, float(v_fov_deg)))
+    cam.viewAngle = math.radians(safe_fov)
 
+    # Eye and target (use fwd vector scaled to 100 cm)
     cam.eye = eye_pt_cm
-    # Target some distance along the forward vector
-    fwd = fwd_vec3.copy()
-    fwd.normalize()
     target = adsk.core.Point3D.create(
-        eye_pt_cm.x + fwd.x * 10.0,
-        eye_pt_cm.y + fwd.y * 10.0,
-        eye_pt_cm.z + fwd.z * 10.0,
+        eye_pt_cm.x + fwd_vec3.x * 100.0,
+        eye_pt_cm.y + fwd_vec3.y * 100.0,
+        eye_pt_cm.z + fwd_vec3.z * 100.0,
     )
     cam.target = target
-
-    # Keep a world-up vector (no roll)
     cam.upVector = adsk.core.Vector3D.create(0, 0, 1)
+    cam.isFitView = False
 
     vp.camera = cam
-    vp.refresh()
-    vp.saveAsImageFile(out_path, IMG_W, IMG_H)
+    adsk.doEvents()
+
+    # Configure rendering and run local render
+    rendering = setup_render_settings(IMG_W, IMG_H)
+    start_and_wait_local_render(rendering, vp.camera, out_path)
 
 
 def run(context):
@@ -229,10 +237,8 @@ def run(context):
         out_dir = os.path.join(photos_dir, prefix)
         ensure_dir(out_dir)
 
-        # Switch to Render workspace if available
-        render_ws = find_render_workspace(ui)
-        if render_ws:
-            render_ws.activate()
+        # Switch to Render workspace
+        switch_to_render_workspace()
 
         # Precompute base direction vectors using provided definition:
         # North = (5,5) -> (5,0), East = (5,5) -> (10,5)
@@ -264,11 +270,12 @@ def run(context):
             ("south", south2),
             ("west", west2),
         ]
+        # Use NE, SE, SW, NW at corners
         dirs_diagonal = [
-            ("ne", ne2),
-            ("se", se2),
-            ("sw", sw2),
-            ("nw", nw2),
+            ("NE", ne2),
+            ("SE", se2),
+            ("SW", sw2),
+            ("NW", nw2),
         ]
 
         # Capture for each requested grid position
@@ -279,8 +286,6 @@ def run(context):
             cy = inches_to_cm(my_in)
             cz = inches_to_cm(EYE_Z_IN)
 
-            center_pt = adsk.core.Point3D.create(cx, cy, cz)
-
             # Which set of directions?
             dirs = dirs_diagonal if is_corner(gx, gy) else dirs_cardinal
 
@@ -288,6 +293,7 @@ def run(context):
                 # Base "right" vector in XY plane (perpendicular, pointing right)
                 # For a forward vector (fx, fy), a right vector is (fy, -fx).
                 right2 = (base_fwd2[1], -base_fwd2[0])
+
                 # Eye positions offset ±0.25" along base-right
                 left_eye_xy = (
                     cx - right2[0] * inches_to_cm(HALF_BASE_IN),
@@ -314,31 +320,32 @@ def run(context):
                     right_fwd2[0] * cp, right_fwd2[1] * cp, sp
                 )
 
-                # Left eye capture
+                # Left eye render
                 left_eye_pt = adsk.core.Point3D.create(
                     left_eye_xy[0], left_eye_xy[1], cz
                 )
                 left_file = os.path.join(
                     out_dir, f"{prefix}_{gx}_{gy}_{dir_name}_left.png"
                 )
-                set_camera_and_capture(
+                set_camera_and_render(
                     app, left_eye_pt, left_fwd3, VFOV_DEG, left_file
                 )
 
-                # Right eye capture
+                # Right eye render
                 right_eye_pt = adsk.core.Point3D.create(
                     right_eye_xy[0], right_eye_xy[1], cz
                 )
                 right_file = os.path.join(
                     out_dir, f"{prefix}_{gx}_{gy}_{dir_name}_right.png"
                 )
-                set_camera_and_capture(
+                set_camera_and_render(
                     app, right_eye_pt, right_fwd3, VFOV_DEG, right_file
                 )
 
         if ui:
             ui.messageBox(
-                f"Capture completed. Images saved to:\n{os.path.join(photos_dir, prefix)}"
+                f"Capture completed. Images saved to:\n"
+                f"{os.path.join(photos_dir, prefix)}"
             )
 
     except Exception as e:
