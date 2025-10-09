@@ -44,6 +44,7 @@ Y_FROM_GRID_X_IN = {
 
 
 def _interp_linear(index: int, knot_map: dict) -> float:
+    """Retrieve a value for a grid index using linear interpolation between knots."""
     if index in knot_map:
         return knot_map[index]
     keys = sorted(knot_map.keys())
@@ -65,6 +66,7 @@ def _interp_linear(index: int, knot_map: dict) -> float:
 
 
 def grid_to_model_in(gx: int, gy: int):
+    """Map integer grid coordinates to the corresponding model-space point in inches."""
     # inches
     mx = _interp_linear(gy, X_FROM_GRID_Y_IN)  # swap axes
     my = _interp_linear(gx, Y_FROM_GRID_X_IN)
@@ -73,10 +75,12 @@ def grid_to_model_in(gx: int, gy: int):
 
 
 def inches_to_cm(x_in: float) -> float:
+    """Convert an inch measurement to centimeters."""
     return x_in * CM_PER_IN
 
 
 def rot2d(vx: float, vy: float, deg: float):
+    """Rotate a 2D vector by the specified number of degrees."""
     rad = math.radians(deg)
     c = math.cos(rad)
     s = math.sin(rad)
@@ -84,6 +88,7 @@ def rot2d(vx: float, vy: float, deg: float):
 
 
 def norm2d(vx: float, vy: float):
+    """Normalize a 2D vector, returning the zero vector when magnitude is tiny."""
     mag = math.hypot(vx, vy)
     if mag <= 1e-9:
         return (0.0, 0.0)
@@ -91,14 +96,17 @@ def norm2d(vx: float, vy: float):
 
 
 def is_corner(gx: int, gy: int) -> bool:
+    """Return True when the grid coordinate lies on a corner of the capture area."""
     return (gx in (0, 10)) and (gy in (0, 10))
 
 
 def ensure_dir(path: str):
+    """Create the directory if it does not already exist."""
     os.makedirs(path, exist_ok=True)
 
 
 def parse_positions_txt(script_dir: str):
+    """Load the image prefix and grid positions from the companion positions.txt file."""
     path = os.path.join(script_dir, "positions.txt")
     prefix = None
     positions = []
@@ -125,6 +133,7 @@ def parse_positions_txt(script_dir: str):
 
 
 def switch_to_render_workspace() -> bool:
+    """Activate Fusion's render workspace so subsequent operations target Render tools."""
     app = adsk.core.Application.get()
     ui = app.userInterface
     ws = ui.workspaces.itemById("FusionRenderEnvironment")
@@ -197,6 +206,7 @@ def set_camera_and_render(
     v_fov_deg: float,
     out_path: str,
 ):
+    """Position the viewport camera, configure render settings, and capture an image."""
     vp = app.activeViewport
     cam = vp.camera
     cam.isSmoothTransition = False
@@ -226,6 +236,7 @@ def set_camera_and_render(
 
 
 def run(context):
+    """Drive the capture workflow by parsing positions and rendering stereo images."""
     app = adsk.core.Application.get()
     ui = app.userInterface if app else None
     try:
@@ -356,5 +367,6 @@ def run(context):
 
 
 def stop(context):
+    """Entry point invoked on script stop; provided for Fusion's API completeness."""
     # No persistent UI to clean up in this simple script
     pass
