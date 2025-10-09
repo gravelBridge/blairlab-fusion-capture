@@ -290,7 +290,15 @@ def run(context):
         ]
 
         # Capture for each requested grid position
-        for (gx, gy) in positions:
+        for (gx_in, gy_in) in positions:
+            # Accept 1-based grid inputs and convert to the original 0-based grid.
+            gx = gx_in - 1
+            gy = gy_in - 1
+            if not (0 <= gx <= 10 and 0 <= gy <= 10):
+                raise RuntimeError(
+                    f"Grid coordinate ({gx_in}, {gy_in}) is outside the valid 1-11 range."
+                )
+
             # Center position (cm)
             mx_in, my_in, _ = grid_to_model_in(gx, gy)
             cx = inches_to_cm(mx_in)
@@ -336,7 +344,7 @@ def run(context):
                     left_eye_xy[0], left_eye_xy[1], cz
                 )
                 left_file = os.path.join(
-                    out_dir, f"{prefix}_{gx}_{gy}_{dir_name}_left.png"
+                    out_dir, f"{prefix}_{gx_in}_{gy_in}_{dir_name}_left.png"
                 )
                 set_camera_and_render(
                     app, left_eye_pt, left_fwd3, VFOV_DEG, left_file
@@ -347,7 +355,7 @@ def run(context):
                     right_eye_xy[0], right_eye_xy[1], cz
                 )
                 right_file = os.path.join(
-                    out_dir, f"{prefix}_{gx}_{gy}_{dir_name}_right.png"
+                    out_dir, f"{prefix}_{gx_in}_{gy_in}_{dir_name}_right.png"
                 )
                 set_camera_and_render(
                     app, right_eye_pt, right_fwd3, VFOV_DEG, right_file
