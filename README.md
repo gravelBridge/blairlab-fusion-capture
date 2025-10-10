@@ -46,6 +46,7 @@ Setup and run (For Fusion version 2604.1.25)
 1. Make sure to have CaptureView folder on your computer and that it contains the fusion manifest file.
 2. Open your design in Fusion 360 (Design workspace). 
 3. In the window menu bar go to Utilites then from ADD-INNS drop down menu select Scripts and Add-Ins. In the window that appears select the add button located to right of the search box at the top of the window. Select script or Add-Inn from device then go to the CaptureView folder and open it. The script will now be available to use in the Scripts and Add-Ins menu.
+5. You specify the configuration and postions you want captured in the postion.txt file. See render-map-fusion-maze.xlsx for coordinate details.
 4. The script switches to the Render workspace and performs local renders. Images are overwritten if they exist.
 
 Notes
