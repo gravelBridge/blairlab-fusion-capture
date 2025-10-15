@@ -270,28 +270,34 @@ def run(context):
         west2 = (-east2[0], -east2[1])
 
         # Diagonals (normalized)
-        ne2 = norm2d(*(north2[0] + east2[0], north2[1] + east2[1]))
-        se2 = norm2d(*(south2[0] + east2[0], south2[1] + east2[1]))
-        sw2 = norm2d(*(south2[0] + west2[0], south2[1] + west2[1]))
-        nw2 = norm2d(*(north2[0] + west2[0], north2[1] + west2[1]))
+        north_vec = east2
+        east_vec = south2
+        south_vec = west2
+        west_vec = north2
+
+        ne_vec = norm2d(*(north_vec[0] + east_vec[0], north_vec[1] + east_vec[1]))
+        se_vec = norm2d(*(south_vec[0] + east_vec[0], south_vec[1] + east_vec[1]))
+        sw_vec = norm2d(*(south_vec[0] + west_vec[0], south_vec[1] + west_vec[1]))
+        nw_vec = norm2d(*(north_vec[0] + west_vec[0], north_vec[1] + west_vec[1]))
 
         dirs_cardinal = [
-            ("north", north2),
-            ("east", east2),
-            ("south", south2),
-            ("west", west2),
+            ("north", north_vec),
+            ("east", east_vec),
+            ("south", south_vec),
+            ("west", west_vec),
         ]
-        # Use NE, SE, SW, NW at corners
         dirs_diagonal = [
-            ("NE", ne2),
-            ("SE", se2),
-            ("SW", sw2),
-            ("NW", nw2),
+            ("NE", ne_vec),
+            ("SE", se_vec),
+            ("SW", sw_vec),
+            ("NW", nw_vec),
         ]
 
         # Capture for each requested grid position
         for (gx_in, gy_in) in positions:
             # Accept 1-based grid inputs and convert to the original 0-based grid.
+            # This is to allign with minigrid coordiantes to some extent. Minigrid also
+            # flips x y positions in pose use with gymnasium.
             gx = gx_in - 1
             gy = gy_in - 1
             if not (0 <= gx <= 10 and 0 <= gy <= 10):
